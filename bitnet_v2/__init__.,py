@@ -1,0 +1,28 @@
+"""
+BitNet v2: Native 4-bit Activations with Hadamard Transformation for 1-bit LLMs
+
+This package provides a complete implementation of BitNet v2 as described in the paper.
+"""
+
+__version__ = "0.1.0"
+
+from .config import BitNetConfig, get_model_config, load_config_from_yaml, save_config_to_yaml
+from .model import BitNetV2Model, BitNetV2ForCausalLM
+from .layers import BitLinear, HBitLinear, RMSNorm, RotaryEmbedding
+from .quantization import WeightQuantizer, ActivationQuantizer, hadamard_transform
+
+__all__ = [
+    "BitNetConfig",
+    "get_model_config", 
+    "load_config_from_yaml",
+    "save_config_to_yaml",
+    "BitNetV2Model",
+    "BitNetV2ForCausalLM",
+    "BitLinear",
+    "HBitLinear", 
+    "RMSNorm",
+    "RotaryEmbedding",
+    "WeightQuantizer",
+    "ActivationQuantizer",
+    "hadamard_transform",
+]
