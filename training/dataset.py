@@ -23,17 +23,35 @@ class RedPajamaDataset(IterableDataset):
             if subset:
                 # Load a specific subset for faster testing
                 self.dataset = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", 
-                                          split=f"{split}[:{subset}]", streaming=streaming)
+                                          split=f"{split}[:{subset}]", 
+                                          streaming=streaming,
+                                          trust_remote_code=True)  # ADD THIS
             else:
                 self.dataset = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", 
-                                          split=split, streaming=streaming)
-        except:
+                                          split=split, 
+                                          streaming=streaming,
+                                          trust_remote_code=True)  # ADD THIS
+        except Exception as e:
             # Fallback to a smaller dataset for testing
-            print("Warning: Using C4 dataset instead of RedPajama")
-            if subset:
-                self.dataset = load_dataset("c4", "en", split=f"{split}[:{subset}]", streaming=streaming)
-            else:
-                self.dataset = load_dataset("c4", "en", split=split, streaming=streaming)
+            print(f"Warning: Using C4 dataset instead of RedPajama. Error: {e}")
+            try:
+                if subset:
+                    self.dataset = load_dataset("c4", "en", 
+                                              split=f"{split}[:{subset}]", 
+                                              streaming=streaming,
+                                              trust_remote_code=True)  # ADD THIS
+                else:
+                    self.dataset = load_dataset("c4", "en", 
+                                              split=split, 
+                                              streaming=streaming,
+                                              trust_remote_code=True)  # ADD THIS
+            except Exception as e2:
+                print(f"Warning: C4 also failed, using tiny dataset. Error: {e2}")
+                # Ultimate fallback to a simple dataset
+                self.dataset = load_dataset("wikitext", "wikitext-2-raw-v1", 
+                                          split=split, 
+                                          streaming=streaming,
+                                          trust_remote_code=True)
         
         if streaming:
             self.iterator = iter(self.dataset)
@@ -70,14 +88,23 @@ class RedPajamaDataset(IterableDataset):
         """Process a single data item"""
         text = item['text']
         
-        # Tokenize
-        tokens = self.tokenizer.encode(
-            text, 
-            max_length=self.max_length, 
-            truncation=True,
-            padding=False,
-            add_special_tokens=True
-        )
+        # Tokenize with proper bounds checking
+        try:
+            tokens = self.tokenizer.encode(
+                text, 
+                max_length=self.max_length, 
+                truncation=True,
+                padding=False,
+                add_special_tokens=True
+            )
+            
+            # Ensure tokens are within vocabulary bounds
+            vocab_size = self.tokenizer.vocab_size
+            tokens = [min(token, vocab_size - 1) for token in tokens]
+            
+        except Exception as e:
+            print(f"Tokenization error: {e}")
+            return None
         
         if len(tokens) < 2:
             return None  # Skip short sequences
@@ -100,8 +127,19 @@ class C4Dataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         
-        # Load C4 dataset
-        dataset = load_dataset("c4", "en", split=split, streaming=False)
+        # Load C4 dataset with trust_remote_code
+        try:
+            dataset = load_dataset("c4", "en", 
+                                 split=split, 
+                                 streaming=False,
+                                 trust_remote_code=True)  # ADD THIS
+        except Exception as e:
+            print(f"C4 loading failed: {e}")
+            # Fallback to WikiText
+            dataset = load_dataset("wikitext", "wikitext-2-raw-v1", 
+                                 split='test', 
+                                 streaming=False,
+                                 trust_remote_code=True)
         
         if max_samples:
             dataset = dataset.select(range(min(max_samples, len(dataset))))
@@ -116,14 +154,23 @@ class C4Dataset(Dataset):
         """Process a single data item"""
         text = item['text']
         
-        # Tokenize
-        tokens = self.tokenizer.encode(
-            text, 
-            max_length=self.max_length, 
-            truncation=True,
-            padding=False,
-            add_special_tokens=True
-        )
+        # Tokenize with bounds checking
+        try:
+            tokens = self.tokenizer.encode(
+                text, 
+                max_length=self.max_length, 
+                truncation=True,
+                padding=False,
+                add_special_tokens=True
+            )
+            
+            # Ensure tokens are within vocabulary bounds
+            vocab_size = self.tokenizer.vocab_size
+            tokens = [min(token, vocab_size - 1) for token in tokens]
+            
+        except Exception as e:
+            print(f"Tokenization error: {e}")
+            return None
         
         if len(tokens) < 2:
             return None
@@ -147,7 +194,9 @@ class WikiTextDataset(Dataset):
         self.max_length = max_length
         
         # Load WikiText dataset
-        dataset = load_dataset("wikitext", version, split=split)
+        dataset = load_dataset("wikitext", version, 
+                             split=split,
+                             trust_remote_code=True)  # ADD THIS
         
         self.data = []
         for item in dataset:
@@ -163,14 +212,23 @@ class WikiTextDataset(Dataset):
         if not text.strip() or text.strip().startswith('='):
             return None
         
-        # Tokenize
-        tokens = self.tokenizer.encode(
-            text, 
-            max_length=self.max_length, 
-            truncation=True,
-            padding=False,
-            add_special_tokens=True
-        )
+        # Tokenize with bounds checking
+        try:
+            tokens = self.tokenizer.encode(
+                text, 
+                max_length=self.max_length, 
+                truncation=True,
+                padding=False,
+                add_special_tokens=True
+            )
+            
+            # Ensure tokens are within vocabulary bounds
+            vocab_size = self.tokenizer.vocab_size
+            tokens = [min(token, vocab_size - 1) for token in tokens]
+            
+        except Exception as e:
+            print(f"Tokenization error: {e}")
+            return None
         
         if len(tokens) < 2:
             return None
@@ -187,7 +245,7 @@ class WikiTextDataset(Dataset):
         return self.data[idx]
 
 def collate_fn(batch):
-    """Collate function for DataLoader"""
+    """Collate function for DataLoader with better error handling"""
     # Filter out None items
     batch = [item for item in batch if item is not None]
     
@@ -204,13 +262,20 @@ def collate_fn(batch):
         input_len = len(item['input_ids'])
         pad_len = max_len - input_len
         
+        # Ensure input_ids are within valid range
+        input_ids_tensor = item['input_ids']
+        input_ids_tensor = torch.clamp(input_ids_tensor, 0, 32000 - 1)  # Safe clamp
+        
         input_ids.append(torch.cat([
-            item['input_ids'],
+            input_ids_tensor,
             torch.full((pad_len,), 0, dtype=torch.long)  # Pad with 0
         ]))
         
+        labels_tensor = item['labels']
+        labels_tensor = torch.clamp(labels_tensor, 0, 32000 - 1)  # Safe clamp for non-ignore tokens
+        
         labels.append(torch.cat([
-            item['labels'],
+            labels_tensor,
             torch.full((pad_len,), -100, dtype=torch.long)  # Ignore padding in loss
         ]))
     
@@ -220,16 +285,22 @@ def collate_fn(batch):
     }
 
 def get_dataset(dataset_name: str, tokenizer, split: str = 'train', **kwargs):
-    """Factory function to get datasets"""
+    """Factory function to get datasets with better error handling"""
     
-    if dataset_name.lower() == 'redpajama':
-        return RedPajamaDataset(tokenizer, split=split, **kwargs)
-    elif dataset_name.lower() == 'c4':
-        return C4Dataset(tokenizer, split=split, **kwargs)
-    elif dataset_name.lower() == 'wikitext':
+    try:
+        if dataset_name.lower() == 'redpajama':
+            return RedPajamaDataset(tokenizer, split=split, **kwargs)
+        elif dataset_name.lower() == 'c4':
+            return C4Dataset(tokenizer, split=split, **kwargs)
+        elif dataset_name.lower() == 'wikitext':
+            return WikiTextDataset(tokenizer, split=split, **kwargs)
+        else:
+            print(f"Unknown dataset: {dataset_name}, falling back to WikiText")
+            return WikiTextDataset(tokenizer, split=split, **kwargs)
+    except Exception as e:
+        print(f"Error loading {dataset_name}: {e}")
+        print("Falling back to WikiText dataset")
         return WikiTextDataset(tokenizer, split=split, **kwargs)
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
 
 class MultiDatasetWrapper(IterableDataset):
     """Wrapper to combine multiple datasets with sampling weights"""
@@ -273,3 +344,28 @@ class MultiDatasetWrapper(IterableDataset):
             # Regular dataset
             idx = random.randint(0, len(dataset) - 1)
             return dataset[idx]
+
+# Additional utility function for safe dataset loading
+def load_dataset_safely(dataset_name, *args, **kwargs):
+    """Safely load datasets with proper error handling"""
+    try:
+        return load_dataset(dataset_name, *args, trust_remote_code=True, **kwargs)
+    except Exception as e:
+        print(f"Failed to load {dataset_name}: {e}")
+        print("Trying fallback options...")
+        
+        # Try some fallback datasets
+        fallback_datasets = [
+            ("wikitext", "wikitext-2-raw-v1"),
+            ("wikitext", "wikitext-103-raw-v1"),
+        ]
+        
+        for fb_name, fb_config in fallback_datasets:
+            try:
+                print(f"Trying fallback: {fb_name}")
+                return load_dataset(fb_name, fb_config, trust_remote_code=True, **kwargs)
+            except Exception as fb_e:
+                print(f"Fallback {fb_name} failed: {fb_e}")
+                continue
+        
+        raise Exception("All dataset loading attempts failed")
